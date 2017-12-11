@@ -19,7 +19,7 @@ add_definitions(
   -std=c++1y -g -Wall -O2 -fPIC
   ${PCL_DEFINITIONS})
 
-add_library(rgbd_bridge
+add_library(rgbd_bridge SHARED
   src/rgbd_bridge.cc
   src/real_sense_sr300.cc)
   #src/openni.cc)
@@ -27,3 +27,9 @@ target_link_libraries(rgbd_bridge
   ${PCL_LIBRARIES}
   ${OpenCV_LIBS}
   realsense::realsense)
+
+install(TARGETS rgbd_bridge
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+
+install(DIRECTORY include/rgbd_bridge
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
