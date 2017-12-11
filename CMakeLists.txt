@@ -15,10 +15,6 @@ include_directories(
 
 link_directories(${PCL_LIBRARY_DIRS})
 
-add_definitions(
-  -std=c++1y -g -Wall -O2 -fPIC
-  ${PCL_DEFINITIONS})
-
 add_library(rgbd_bridge SHARED
   src/rgbd_bridge.cc
   src/real_sense_sr300.cc)
