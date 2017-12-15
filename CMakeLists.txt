@@ -4,8 +4,6 @@ project(rgbd_bridge)
 
 find_package(PCL REQUIRED)
 find_package(OpenCV 2.4 REQUIRED)
-#find_package(realsense)
-#find_package(OpenNi2)
 
 include(ExternalProject)
 
@@ -22,7 +20,6 @@ include_directories(
   ${CMAKE_INSTALL_PREFIX}/include
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS})
-  #${OPENNI2_INCLUDE_DIRS})
 
 link_directories(${PCL_LIBRARY_DIRS}
   ${CMAKE_INSTALL_PREFIX}/lib)
@@ -30,15 +27,20 @@ link_directories(${PCL_LIBRARY_DIRS}
 add_library(rgbd_bridge SHARED
   src/rgbd_bridge.cc
   src/real_sense_sr300.cc)
-  #src/openni.cc)
 add_dependencies(rgbd_bridge realsense1)
 target_link_libraries(rgbd_bridge
   ${PCL_LIBRARIES}
   ${OpenCV_LIBS}
   realsense)
 
+add_executable(test_real_sense src/test_real_sense.cc)
+target_link_libraries(test_real_sense rgbd_bridge)
+
 install(TARGETS rgbd_bridge
   DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
 install(DIRECTORY include/rgbd_bridge
   DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
+
+install(TARGETS test_real_sense
+  DESTINATION ${CMAKE_INSTALL_PREFIX})
