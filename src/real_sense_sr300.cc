@@ -359,6 +359,9 @@ void RealSenseSR300::PollingThread() {
     // Block until all frames have arrived.
     frameset = pipeline_.wait_for_frames();
 
+    if (frameset.size() != stream_profiles_.size())
+      continue;
+
     for (auto &pair : stream_profiles_) {
       rs2_stream stream = pair.first;
       frames[stream] = frameset.first(stream);
