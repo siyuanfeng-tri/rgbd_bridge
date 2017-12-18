@@ -11,12 +11,14 @@ std::string ImageTypeToString(const ImageType type) {
     return "DEPTH";
   case ImageType::IR:
     return "INFRARED";
+  /*
   case ImageType::RECT_RGB:
     return "RECTIFIED_RGB";
   case ImageType::RECT_RGB_ALIGNED_DEPTH:
     return "DEPTH_ALIGNED_TO_RECTIFIED_RGB";
   case ImageType::DEPTH_ALIGNED_RGB:
     return "RGB_ALIGNED_TO_DEPTH";
+  */
   default:
     throw std::runtime_error("Unknown ImageType");
   }
@@ -25,12 +27,12 @@ std::string ImageTypeToString(const ImageType type) {
 bool is_color_image(const ImageType type) {
   switch (type) {
   case ImageType::RGB:
-  case ImageType::RECT_RGB:
-  case ImageType::DEPTH_ALIGNED_RGB:
+  //case ImageType::RECT_RGB:
+  //case ImageType::DEPTH_ALIGNED_RGB:
     return true;
   case ImageType::IR:
   case ImageType::DEPTH:
-  case ImageType::RECT_RGB_ALIGNED_DEPTH:
+  //case ImageType::RECT_RGB_ALIGNED_DEPTH:
     return false;
   default:
     throw std::runtime_error("Unknown ImageType");
@@ -41,11 +43,11 @@ bool is_depth_image(const ImageType type) {
   switch (type) {
   case ImageType::IR:
   case ImageType::RGB:
-  case ImageType::RECT_RGB:
-  case ImageType::DEPTH_ALIGNED_RGB:
+  //case ImageType::RECT_RGB:
+  //case ImageType::DEPTH_ALIGNED_RGB:
     return false;
   case ImageType::DEPTH:
-  case ImageType::RECT_RGB_ALIGNED_DEPTH:
+  //case ImageType::RECT_RGB_ALIGNED_DEPTH:
     return true;
   default:
     throw std::runtime_error("Unknown ImageType");

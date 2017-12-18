@@ -117,20 +117,17 @@ int main(int argc, char **argv) {
   std::vector<rgbd_bridge::ImageType> channels = {
       rgbd_bridge::ImageType::RGB,
       rgbd_bridge::ImageType::DEPTH,
-      rgbd_bridge::ImageType::RECT_RGB,
-      rgbd_bridge::ImageType::RECT_RGB_ALIGNED_DEPTH,
-      rgbd_bridge::ImageType::DEPTH_ALIGNED_RGB,
       rgbd_bridge::ImageType::IR};
 
   for (int i = 0; i < rgbd_bridge::RealSenseSR300::get_number_of_cameras();
        i++) {
     auto real_sense = std::make_unique<rgbd_bridge::RealSenseSR300>(i);
-    real_sense->set_mode(rs_ivcam_preset::RS_IVCAM_PRESET_SHORT_RANGE);
+    // real_sense->set_mode(rs_ivcam_preset::RS_IVCAM_PRESET_SHORT_RANGE);
 
     devices.push_back(std::move(real_sense));
     rgbd_bridge::RGBDSensor &test = *devices.back();
 
-    test.Start(channels, rgbd_bridge::ImageType::RECT_RGB);
+    test.Start(channels, rgbd_bridge::ImageType::RGB);
 
     for (const auto type : channels) {
       names.push_back(ImageTypeToString(type) + std::to_string(i));

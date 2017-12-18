@@ -11,14 +11,21 @@ enum class ImageType {
   RGB = 0,
   DEPTH,
   IR,
-  RECT_RGB,
-  RECT_RGB_ALIGNED_DEPTH,
-  DEPTH_ALIGNED_RGB,
+  //RECT_RGB,
+  //RECT_RGB_ALIGNED_DEPTH,
+  //DEPTH_ALIGNED_RGB,
 };
 
 std::string ImageTypeToString(const ImageType type);
 bool is_color_image(const ImageType type);
 bool is_depth_image(const ImageType type);
+
+struct Intrinsics {
+  float fx{};
+  float fy{};
+  float ppx{};
+  float ppy{};
+};
 
 class RGBDSensor {
 public:
@@ -56,14 +63,10 @@ public:
 
   virtual bool is_enabled(const ImageType type) const = 0;
 
-  virtual void set_focal_length_x(const ImageType type, float val) {}
-  virtual void set_focal_length_y(const ImageType type, float val) {}
-  virtual void set_principal_point_x(const ImageType type, float val) {}
-  virtual void set_principal_point_y(const ImageType type, float val) {}
-  virtual float get_focal_length_x(const ImageType type) const = 0;
-  virtual float get_focal_length_y(const ImageType type) const = 0;
-  virtual float get_principal_point_x(const ImageType type) const = 0;
-  virtual float get_principal_point_y(const ImageType type) const = 0;
+  virtual void set_intrinsics(const ImageType type, const Intrinsics& intrinsics) {
+    throw std::runtime_error("not implemented");
+  }
+  virtual Intrinsics get_intrinsics(const ImageType type) const = 0;
 
 protected:
   template <typename DataType> struct TimeStampedData {

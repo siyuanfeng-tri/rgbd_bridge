@@ -2,7 +2,7 @@
 
 #include "rgbd_bridge/rgbd_bridge.h"
 #include <atomic>
-#include <librealsense/rs.hpp>
+#include <librealsense2/rs.hpp>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -20,7 +20,7 @@ public:
              const ImageType cloud_camera) override;
   void Stop() override;
 
-  void set_mode(const rs_ivcam_preset mode);
+  // void set_mode(const rs_ivcam_preset mode);
 
   bool is_enabled(const ImageType type) const override;
 
@@ -30,6 +30,7 @@ public:
   Eigen::Vector3f Deproject(const ImageType type, const Eigen::Vector2i &uv,
                             float depth) const override;
 
+  /*
   void set_focal_length_x(const ImageType type, float val) override;
   void set_focal_length_y(const ImageType type, float val) override;
   void set_principal_point_x(const ImageType type, float val) override;
@@ -39,6 +40,9 @@ public:
   float get_focal_length_y(const ImageType type) const override;
   float get_principal_point_x(const ImageType type) const override;
   float get_principal_point_y(const ImageType type) const override;
+  */
+
+  Intrinsics get_intrinsics(const ImageType type) const override;
 
   static int get_number_of_cameras();
 
@@ -53,21 +57,25 @@ private:
   pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr
   DoGetLatestPointCloud(uint64_t *timestamp) const override;
 
-  rs::stream ImageTypeToStreamType(const ImageType type) const;
+  rs2_stream ImageTypeToStreamType(const ImageType type) const;
 
   void PollingThread();
 
-  rs::device *camera_;
-  static rs::context context_;
+  rs2::device camera_;
+  rs2::pipeline pipeline_;
+  rs2::config config_;
+  static rs2::context context_;
 
-  std::map<rs::stream, rs::intrinsics> intrinsics_;
+  std::map<rs2_stream, rs2::stream_profile> stream_profiles_;
+  std::map<rs2_stream, rs2_intrinsics> intrinsics_;
+  float depth_scale_;
 
   std::atomic<bool> run_{false};
   mutable std::mutex lock_;
   std::thread thread_;
   std::map<const ImageType, TimeStampedImage> images_;
   TimeStampedCloud cloud_{};
-  rs::stream cloud_base_;
+  rs2_stream cloud_base_;
 };
 
 } // namespace rgbd_bridge

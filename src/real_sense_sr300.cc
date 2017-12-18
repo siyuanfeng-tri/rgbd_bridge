@@ -1,4 +1,5 @@
 #include "rgbd_bridge/real_sense_sr300.h"
+#include "librealsense2/rsutil.h"
 
 #include <boost/make_shared.hpp>
 
@@ -6,25 +7,25 @@ namespace rgbd_bridge {
 namespace {
 
 boost::shared_ptr<cv::Mat> MakeImg(const void *src, int width, int height,
-                                   rs::format pixel_type) {
+                                   rs2_format pixel_type) {
   int cv_type = -1;
   switch (pixel_type) {
-  case rs::format::z16:
-  case rs::format::disparity16:
-  case rs::format::y16:
-  case rs::format::raw16:
+  case RS2_FORMAT_Z16:
+  case RS2_FORMAT_DISPARITY16:
+  case RS2_FORMAT_Y16:
+  case RS2_FORMAT_RAW16:
     cv_type = CV_16UC1;
     break;
-  case rs::format::y8:
-  case rs::format::raw8:
+  case RS2_FORMAT_Y8:
+  case RS2_FORMAT_RAW8:
     cv_type = CV_8UC1;
     break;
-  case rs::format::rgb8:
-  case rs::format::bgr8:
+  case RS2_FORMAT_RGB8:
+  case RS2_FORMAT_BGR8:
     cv_type = CV_8UC3;
     break;
-  case rs::format::rgba8:
-  case rs::format::bgra8:
+  case RS2_FORMAT_RGBA8:
+  case RS2_FORMAT_BGRA8:
     cv_type = CV_8UC4;
     break;
   default:
@@ -76,10 +77,10 @@ void ScaleImgInPlace(cv::Mat *img, float scale) {
 }
 
 pcl::PointCloud<pcl::PointXYZRGB>::Ptr
-MakePointCloud(const RealSenseSR300 &camera, const rs::intrinsics &depth_intrin,
-               const rs::intrinsics &color_intrin,
-               const rs::extrinsics &depth_to_color,
-               const rs::extrinsics &depth_to_desired, float depth_scale,
+MakePointCloud(const RealSenseSR300 &camera, const rs2_intrinsics &depth_intrin,
+               const rs2_intrinsics &color_intrin,
+               const rs2_extrinsics &depth_to_color,
+               const rs2_extrinsics &depth_to_desired, float depth_scale,
                const uint8_t *color_image, const uint16_t *depth_image) {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud =
       boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
@@ -97,22 +98,30 @@ MakePointCloud(const RealSenseSR300 &camera, const rs::intrinsics &depth_intrin,
 
       // Map from pixel coordinates in the depth image to pixel coordinates in
       // the color image
-      rs::float2 depth_pixel = {(float)dx, (float)dy};
-      rs::float3 depth_point =
-          depth_intrin.deproject(depth_pixel, depth_in_meters);
+      float depth_pixel[2] = {(float)dx, (float)dy};
+      float depth_point[3];
+      rs2_deproject_pixel_to_point(depth_point, &depth_intrin, depth_pixel, depth_in_meters);
 
+      /*
       rs::float3 color_point = depth_to_color.transform(depth_point);
       rs::float2 color_pixel = color_intrin.project(color_point);
       rs::float3 desired_point = depth_to_desired.transform(depth_point);
+      */
+      float color_point[3];
+      rs2_transform_point_to_point(color_point, &depth_to_color, depth_point);
+      float color_pixel[2];
+      rs2_project_point_to_pixel(color_pixel, &color_intrin, color_point);
+      float desired_point[3];
+      rs2_transform_point_to_point(desired_point, &depth_to_desired, depth_point);
 
       // Use the color from the nearest color pixel, or pure white if this
       // point falls outside the color image
-      const int cx = (int)std::round(color_pixel.x),
-                cy = (int)std::round(color_pixel.y);
+      const int cx = (int)std::round(color_pixel[0]),
+                cy = (int)std::round(color_pixel[1]);
       pcl::PointXYZRGB point;
-      point.x = desired_point.x;
-      point.y = desired_point.y;
-      point.z = desired_point.z;
+      point.x = desired_point[0];
+      point.y = desired_point[1];
+      point.z = desired_point[2];
       if (cx < 0 || cy < 0 || cx >= color_intrin.width ||
           cy >= color_intrin.height) {
         point.r = 255;
@@ -130,28 +139,51 @@ MakePointCloud(const RealSenseSR300 &camera, const rs::intrinsics &depth_intrin,
 }
 }
 
-rs::context RealSenseSR300::context_;
+rs2::context RealSenseSR300::context_;
 
 RealSenseSR300::RealSenseSR300(int camera_id)
-    : RGBDSensor({ImageType::RGB, ImageType::DEPTH, ImageType::IR,
-                  ImageType::RECT_RGB, ImageType::RECT_RGB_ALIGNED_DEPTH,
-                  ImageType::DEPTH_ALIGNED_RGB}) {
-  const int num_cameras = context_.get_device_count();
+    : RGBDSensor({ImageType::RGB, ImageType::DEPTH, ImageType::IR}),
+                  //ImageType::RECT_RGB, ImageType::RECT_RGB_ALIGNED_DEPTH,
+                  //ImageType::DEPTH_ALIGNED_RGB}),
+      pipeline_(context_) {
+  rs2::device_list devices = context_.query_devices();
+
+  const int num_cameras = devices.size();
   if (num_cameras <= camera_id) {
     throw std::runtime_error("Device " + std::to_string(camera_id) +
                              " not detected. Is it plugged in?");
   }
-  camera_ = context_.get_device(camera_id);
+  camera_ = devices[camera_id];
 
+  // Want these streams.
+  config_.enable_stream(RS2_STREAM_COLOR, RS2_FORMAT_RGB8, 30);
+  config_.enable_stream(RS2_STREAM_DEPTH, RS2_FORMAT_Z16, 30);
+  config_.enable_stream(RS2_STREAM_INFRARED, RS2_FORMAT_Y16, 30);
+  rs2::pipeline_profile pipeline_profile = config_.resolve(pipeline_);
+  std::vector<rs2::stream_profile> profiles = pipeline_profile.get_streams();
+  for (const auto& profile : profiles) {
+    stream_profiles_[profile.stream_type()] = profile;
+    intrinsics_[profile.stream_type()] = profile.as<rs2::video_stream_profile>().get_intrinsics();
+  }
+
+  std::vector<rs2::sensor> sensors = camera_.query_sensors();
+  for (const rs2::sensor& sensor : sensors) {
+    if (rs2::depth_sensor dpt_sensor = sensor.as<rs2::depth_sensor>()) {
+      depth_scale_ = dpt_sensor.get_depth_scale();
+    }
+  }
+
+  /*
   // Get supported ImageType.
   const auto &supported_types = get_supported_image_types();
-  camera_->enable_stream(rs::stream::color, rs::preset::best_quality);
-  camera_->enable_stream(rs::stream::depth, rs::preset::best_quality);
-  camera_->enable_stream(rs::stream::infrared, rs::preset::best_quality);
+  camera_.enable_stream(rs2_stream::color, rs::preset::best_quality);
+  camera_.enable_stream(rs2_stream::depth, rs::preset::best_quality);
+  camera_.enable_stream(rs2_stream::infrared, rs::preset::best_quality);
   for (const auto &type : supported_types) {
-    rs::stream stream = ImageTypeToStreamType(type);
-    intrinsics_[stream] = camera_->get_stream_intrinsics(stream);
+    rs2_stream stream = ImageTypeToStreamType(type);
+    intrinsics_[stream] = camera_.get_stream_intrinsics(stream);
   }
+  */
 }
 
 bool RealSenseSR300::IsObjectInGrasp(const cv::Mat &raw_depth,
@@ -180,33 +212,38 @@ bool RealSenseSR300::IsObjectInGrasp(const cv::Mat &raw_depth,
 void RealSenseSR300::set_laser_projector_power(int level) {
   // sfeng: for some wtf reaseon, i need to set this in a tight loop to get it
   // to work.
+
+  /*
   for (int i = 0; i < 3; i++) {
-    camera_->set_option(rs::option::f200_laser_power, level);
+    camera_.set_option(rs::option::f200_laser_power, level);
   }
-  assert(camera_->get_option(rs::option::f200_laser_power) == level);
+  assert(camera_.get_option(rs::option::f200_laser_power) == level);
+  */
 }
 
 Eigen::Vector2f RealSenseSR300::Project(const ImageType type,
                                         const Eigen::Vector3f &xyz) const {
-  const rs::stream stream = ImageTypeToStreamType(type);
-  const rs::intrinsics &intrinsics = intrinsics_.at(stream);
-  rs::float3 xyz1 = {xyz(0), xyz(1), xyz(2)};
-  rs::float2 pixel = intrinsics.project(xyz1);
-  return Eigen::Vector2f(pixel.x, pixel.y);
+  const rs2_stream stream = ImageTypeToStreamType(type);
+  const rs2_intrinsics& intrinsics = intrinsics_.at(stream);
+  float xyz1[3] = {xyz(0), xyz(1), xyz(2)};
+  float pixel[2];
+  rs2_project_point_to_pixel(pixel, &intrinsics, xyz1);
+  return Eigen::Vector2f(pixel[0], pixel[1]);
 }
 
 Eigen::Vector3f RealSenseSR300::Deproject(const ImageType type,
                                           const Eigen::Vector2i &uv,
                                           float depth) const {
-  const rs::stream stream = ImageTypeToStreamType(type);
-  const rs::intrinsics &intrinsics = intrinsics_.at(stream);
-  rs::float2 pixel = {(float)uv(0), (float)uv(1)};
-  rs::float3 xyz = intrinsics.deproject(pixel, depth);
-  return Eigen::Vector3f(xyz.x, xyz.y, xyz.z);
+  const rs2_stream stream = ImageTypeToStreamType(type);
+  const rs2_intrinsics& intrinsics = intrinsics_.at(stream);
+  float pixel[2] = {(float)uv(0), (float)uv(1)};
+  float xyz[3];
+  rs2_deproject_pixel_to_point(xyz, &intrinsics, pixel, depth);
+  return Eigen::Vector3f(xyz[0], xyz[1], xyz[2]);
 }
 
 int RealSenseSR300::get_number_of_cameras() {
-  return context_.get_device_count();
+  return context_.query_devices().size();
 }
 
 void RealSenseSR300::Start(const std::vector<ImageType> &types,
@@ -216,12 +253,14 @@ void RealSenseSR300::Start(const std::vector<ImageType> &types,
   }
 
   run_ = true;
-  std::cout << std::string(camera_->get_name()) << "@"
-            << std::string(camera_->get_usb_port_id()) << " starting.\n";
+  std::string cam_name = camera_.get_info(RS2_CAMERA_INFO_NAME);
+  std::string serial = camera_.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+
+  std::cout << cam_name << " #" << serial << " starting.\n";
 
   /////////////////////////////////////////////////////////////////////////////
   // Config params.
-  set_mode(rs_ivcam_preset::RS_IVCAM_PRESET_DEFAULT);
+  // set_mode(rs_ivcam_preset::RS_IVCAM_PRESET_DEFAULT);
   cloud_base_ = ImageTypeToStreamType(cloud_base);
 
   /////////////////////////////////////////////////////////////////////////////
@@ -243,7 +282,7 @@ void RealSenseSR300::Start(const std::vector<ImageType> &types,
 
   /////////////////////////////////////////////////////////////////////////////
   // Start thread.
-  camera_->start();
+  auto pipeline_profile = pipeline_.start(config_);
 
   thread_ = std::thread(&RealSenseSR300::PollingThread, this);
 }
@@ -251,140 +290,105 @@ void RealSenseSR300::Start(const std::vector<ImageType> &types,
 void RealSenseSR300::Stop() {
   run_ = false;
   thread_.join();
-  camera_->stop();
+  pipeline_.stop();
   // Clean up.
   images_.clear();
   cloud_ = TimeStampedCloud();
 }
 
+/*
 void RealSenseSR300::set_mode(const rs_ivcam_preset mode) {
   apply_ivcam_preset(camera_, mode);
 }
+*/
 
-rs::stream RealSenseSR300::ImageTypeToStreamType(const ImageType type) const {
+rs2_stream RealSenseSR300::ImageTypeToStreamType(const ImageType type) const {
   switch (type) {
   case ImageType::RGB:
-    return rs::stream::color;
+    return RS2_STREAM_COLOR;
   case ImageType::DEPTH:
-    return rs::stream::depth;
+    return RS2_STREAM_DEPTH;
   case ImageType::IR:
-    return rs::stream::infrared;
+    return RS2_STREAM_INFRARED;
+  /*
   case ImageType::RECT_RGB:
-    return rs::stream::rectified_color;
+    return RS2_STREAM_rectified_color;
   case ImageType::RECT_RGB_ALIGNED_DEPTH:
-    return rs::stream::depth_aligned_to_rectified_color;
+    return RS2_STREAM_depth_aligned_to_rectified_color;
   case ImageType::DEPTH_ALIGNED_RGB:
-    return rs::stream::color_aligned_to_depth;
+    return RS2_STREAM_color_aligned_to_depth;
+  */
   default:
     throw std::logic_error("Unsupported ImageType");
   }
 }
 
 bool RealSenseSR300::is_enabled(const ImageType type) const {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  return camera_->is_stream_enabled(ImageTypeToStreamType(type));
+  // todo
+  return true;
+  // return camera_.is_stream_enabled(ImageTypeToStreamType(type));
 }
 
-float RealSenseSR300::get_focal_length_x(const ImageType type) const {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  return intrinsics_.at(ImageTypeToStreamType(type)).fx;
-}
+Intrinsics RealSenseSR300::get_intrinsics(const ImageType type) const {
+  Intrinsics ret;
+  rs2_stream stream = ImageTypeToStreamType(type);
+  const rs2_intrinsics& intrinsics = intrinsics_.at(stream);
+  ret.fx = intrinsics.fx;
+  ret.fy = intrinsics.fy;
+  ret.ppx = intrinsics.ppx;
+  ret.ppy = intrinsics.ppy;
 
-float RealSenseSR300::get_focal_length_y(const ImageType type) const {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  return intrinsics_.at(ImageTypeToStreamType(type)).fy;
-}
-
-float RealSenseSR300::get_principal_point_x(const ImageType type) const {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  return intrinsics_.at(ImageTypeToStreamType(type)).ppx;
-}
-
-float RealSenseSR300::get_principal_point_y(const ImageType type) const {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  return intrinsics_.at(ImageTypeToStreamType(type)).ppy;
-}
-
-void RealSenseSR300::set_focal_length_x(const ImageType type, float val) {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  intrinsics_.at(ImageTypeToStreamType(type)).fx = val;
-  assert(get_focal_length_x(type) == val);
-}
-
-void RealSenseSR300::set_focal_length_y(const ImageType type, float val) {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  intrinsics_.at(ImageTypeToStreamType(type)).fy = val;
-  assert(get_focal_length_y(type) == val);
-}
-
-void RealSenseSR300::set_principal_point_x(const ImageType type, float val) {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  intrinsics_.at(ImageTypeToStreamType(type)).ppx = val;
-  assert(get_principal_point_x(type) == val);
-}
-
-void RealSenseSR300::set_principal_point_y(const ImageType type, float val) {
-  if (!camera_)
-    throw std::runtime_error("No Camera available.");
-  intrinsics_.at(ImageTypeToStreamType(type)).ppy = val;
-  assert(get_principal_point_y(type) == val);
+  return ret;
 }
 
 void RealSenseSR300::PollingThread() {
-  rs::device &camera = *camera_;
+  rs2_intrinsics depth_intrin = intrinsics_.at(RS2_STREAM_DEPTH);
+  rs2_intrinsics color_intrin = intrinsics_.at(RS2_STREAM_COLOR);
+  rs2_extrinsics depth_to_color =
+      stream_profiles_.at(RS2_STREAM_DEPTH).get_extrinsics_to(stream_profiles_.at(RS2_STREAM_COLOR));
 
-  rs::intrinsics depth_intrin = intrinsics_.at(rs::stream::depth);
-  rs::intrinsics color_intrin = intrinsics_.at(rs::stream::color);
-  rs::extrinsics depth_to_color =
-      camera.get_extrinsics(rs::stream::depth, rs::stream::color);
+  rs2_extrinsics depth_to_desired =
+      stream_profiles_.at(RS2_STREAM_DEPTH).get_extrinsics_to(stream_profiles_.at(cloud_base_));
 
-  rs::extrinsics depth_to_desired =
-      camera.get_extrinsics(rs::stream::depth, cloud_base_);
-
-  float depth_scale = camera.get_depth_scale();
-
-  // This should contain all the enabled streams.
   std::map<const ImageType, TimeStampedImage> images = images_;
+
+  rs2::frameset frameset;
+  std::map<rs2_stream, rs2::frame> frames;
 
   while (run_) {
     // Block until all frames have arrived.
-    camera.wait_for_frames();
+    frameset = pipeline_.wait_for_frames();
 
-    // TODO(Jiaji): Use the points directly to reconstruct the point cloud
-    // as in cpp_pointcloud.
+    for (auto &pair : stream_profiles_) {
+      rs2_stream stream = pair.first;
+      frames[stream] = frameset.first(stream);
+    }
 
     // Raw color and depth img.
-    const uint8_t *color_image =
-        (const uint8_t *)camera.get_frame_data(rs::stream::color);
-
-    const uint16_t *depth_image =
-        (const uint16_t *)camera.get_frame_data(rs::stream::depth);
+    const uint8_t *color_image = (const uint8_t *)frames.at(RS2_STREAM_COLOR).get_data();
+    const uint16_t *depth_image = (const uint16_t *)frames.at(RS2_STREAM_DEPTH).get_data();
 
     // Make point cloud
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud =
         MakePointCloud(*this, depth_intrin, color_intrin, depth_to_color,
-                       depth_to_desired, depth_scale, color_image, depth_image);
+                       depth_to_desired, depth_scale_, color_image, depth_image);
 
     // Make cv::Mat of the images.
-    // Jiaji: Trying out depth_aligned_to_rect_rgb.
+    uint64_t depth_time;
+    uint64_t depth_ctr;
     for (auto &pair : images) {
-      rs::stream stream = ImageTypeToStreamType(pair.first);
-      pair.second.timestamp = camera.get_frame_timestamp(stream);
-      pair.second.count = camera.get_frame_number(stream);
+      rs2_stream stream = ImageTypeToStreamType(pair.first);
+      const rs2::video_frame frame = frames.at(stream).as<rs2::video_frame>();
+      pair.second.timestamp = (uint64_t)frame.get_timestamp();
+      pair.second.count = frame.get_frame_number();
       boost::shared_ptr<cv::Mat> img = MakeImg(
-          camera.get_frame_data(stream), camera.get_stream_width(stream),
-          camera.get_stream_height(stream), camera.get_stream_format(stream));
+          frame.get_data(), frame.get_width(), frame.get_height(),
+          stream_profiles_.at(stream).format());
       // Scale depth image to units of mm.
-      if (is_depth_image(pair.first)) {
-        ScaleImgInPlace(img.get(), depth_scale * 1e3);
+      if (stream == RS2_STREAM_DEPTH) {
+        ScaleImgInPlace(img.get(), depth_scale_ * 1e3);
+        depth_time = pair.second.timestamp;
+        depth_ctr = pair.second.count;
       }
 
       pair.second.data = img;
@@ -394,8 +398,8 @@ void RealSenseSR300::PollingThread() {
     std::unique_lock<std::mutex> lock2(lock_);
     images_ = images;
 
-    cloud_.timestamp = camera.get_frame_timestamp(rs::stream::depth);
-    cloud_.count = camera.get_frame_number(rs::stream::depth);
+    cloud_.timestamp = depth_time;
+    cloud_.count = depth_ctr;
     cloud_.data = cloud;
   }
 }
