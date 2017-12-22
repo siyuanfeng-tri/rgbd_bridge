@@ -158,7 +158,9 @@ int main(int argc, char **argv) {
       cv::setMouseCallback(ImageTypeToString(channels[c]) + std::to_string(i),
                            mouse_click, &(inputs[i][c]));
     }
-    cloud_threads.emplace_back(std::thread(cloud_loop, devices[i].get()));
+    // Since i can only visualize 1 cloud with pcl's viz.
+    if (devices.size() == 1)
+      cloud_threads.emplace_back(std::thread(cloud_loop, devices[i].get()));
   }
 
   for (auto &thread : img_threads)
