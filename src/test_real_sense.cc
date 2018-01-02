@@ -8,6 +8,7 @@ using rgbd_bridge::ImageType;
 struct UserClickedPt {
   int x{-1};
   int y{-1};
+  bool save_pic{false};
   std::string window_name;
 };
 
@@ -60,10 +61,12 @@ cv::Mat proc_rgb_image(const cv::Mat &raw_rgb, const UserClickedPt &input) {
 
 void image_loop(const rgbd_bridge::RGBDSensor *driver, int camera_id,
                 const std::vector<rgbd_bridge::ImageType> channels,
-                const std::vector<UserClickedPt> *clicked_xy) {
+                std::vector<UserClickedPt> *clicked_xy) {
   uint64_t timestamp;
 
   cv::Mat tmp;
+
+  int ctr = 0;
   while (true) {
     for (size_t i = 0; i < channels.size(); i++) {
       const auto type = channels[i];
@@ -75,6 +78,10 @@ void image_loop(const rgbd_bridge::RGBDSensor *driver, int camera_id,
           tmp = proc_depth_image(*driver, type, *img, clicked_xy->at(i));
         } else if (type == rgbd_bridge::ImageType::IR) {
           tmp = proc_ir_image(*img, clicked_xy->at(i));
+        }
+        if (clicked_xy->at(i).save_pic) {
+          cv::imwrite(ImageTypeToString(type) + std::to_string(camera_id) + std::to_string(ctr++) + ".jpg", tmp);
+          clicked_xy->at(i).save_pic = false;
         }
 
         cv::imshow(ImageTypeToString(type) + std::to_string(camera_id), tmp);
@@ -102,11 +109,13 @@ void cloud_loop(const rgbd_bridge::RGBDSensor *driver) {
 }
 
 void mouse_click(int event, int x, int y, int flags, void *userdata) {
+  UserClickedPt *data = (UserClickedPt *)userdata;
   if (event == cv::EVENT_LBUTTONDOWN) {
-    UserClickedPt *data = (UserClickedPt *)userdata;
     data->x = x;
     data->y = y;
     std::cout << data->window_name << ": " << x << ", " << y << "\n";
+  } else if (event == cv::EVENT_RBUTTONDOWN) {
+    data->save_pic = true;
   }
 }
 
