@@ -5,6 +5,31 @@
 namespace rgbd_bridge {
 namespace {
 
+void print_extrinsics(const rs::extrinsics& ex) {
+  std::cout << ex.rotation[0] << ", " << ex.rotation[1] << ", " << ex.rotation[2] << ", " << ex.translation[0] << "\n";
+  std::cout << ex.rotation[3] << ", " << ex.rotation[4] << ", " << ex.rotation[5] << ", " << ex.translation[1] << "\n";
+  std::cout << ex.rotation[6] << ", " << ex.rotation[7] << ", " << ex.rotation[8] << ", " << ex.translation[2] << "\n";
+}
+
+void rs_extrinsics_to_eigen(const rs::extrinsics& ex, Eigen::Isometry3f* tf) {
+  tf->setIdentity();
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      tf->linear()(i, j) = ex.rotation[3 * i + j];
+    }
+    tf->translation()(i) = ex.translation[i];
+  }
+}
+
+void eigen_to_rs_extrinsics(const Eigen::Isometry3f& tf, rs::extrinsics* ex) {
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      ex->rotation[3 * i + j] = tf.linear()(i, j);
+    }
+    ex->translation[i] = tf.translation()(i);
+  }
+}
+
 boost::shared_ptr<cv::Mat> MakeImg(const void *src, int width, int height,
                                    rs::format pixel_type) {
   int cv_type = -1;
@@ -152,6 +177,10 @@ RealSenseSR300::RealSenseSR300(int camera_id)
     rs::stream stream = ImageTypeToStreamType(type);
     intrinsics_[stream] = camera_->get_stream_intrinsics(stream);
   }
+
+  // Get default extrinsics.
+  rs::extrinsics ex = camera_->get_extrinsics(rs::stream::depth, rs::stream::color);
+  rs_extrinsics_to_eigen(ex, &ir_to_rgb_);
 }
 
 bool RealSenseSR300::IsObjectInGrasp(const cv::Mat &raw_depth,
@@ -343,11 +372,14 @@ void RealSenseSR300::PollingThread() {
 
   rs::intrinsics depth_intrin = intrinsics_.at(rs::stream::depth);
   rs::intrinsics color_intrin = intrinsics_.at(rs::stream::color);
-  rs::extrinsics depth_to_color =
-      camera.get_extrinsics(rs::stream::depth, rs::stream::color);
-
-  rs::extrinsics depth_to_desired =
-      camera.get_extrinsics(rs::stream::depth, cloud_base_);
+  rs::extrinsics depth_to_color, depth_to_desired;
+  eigen_to_rs_extrinsics(ir_to_rgb_, &depth_to_color);
+  if (cloud_base_ == rs::stream::color ||
+      cloud_base_ == rs::stream::rectified_color) {
+    eigen_to_rs_extrinsics(ir_to_rgb_, &depth_to_desired);
+  } else {
+    depth_to_desired = camera.get_extrinsics(rs::stream::depth, cloud_base_);
+  }
 
   float depth_scale = camera.get_depth_scale();
 
@@ -427,6 +459,10 @@ RealSenseSR300::DoGetLatestPointCloud(uint64_t *timestamp) const {
   }
   *timestamp = cloud_.timestamp;
   return cloud_.data;
+}
+
+void RealSenseSR300::set_ir_to_rgb_extrinsics(const Eigen::Isometry3f& tf) {
+  ir_to_rgb_ = tf;
 }
 
 } // namespace rgbd_bridge

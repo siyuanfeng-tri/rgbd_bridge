@@ -44,6 +44,8 @@ public:
 
   void set_laser_projector_power(int level);
 
+  void set_ir_to_rgb_extrinsics(const Eigen::Isometry3f& tf);
+
   bool IsObjectInGrasp(const cv::Mat &raw_depth, double depth_thresh_m) const;
 
 private:
@@ -61,6 +63,7 @@ private:
   static rs::context context_;
 
   std::map<rs::stream, rs::intrinsics> intrinsics_;
+  Eigen::Isometry3f ir_to_rgb_;
 
   std::atomic<bool> run_{false};
   mutable std::mutex lock_;
